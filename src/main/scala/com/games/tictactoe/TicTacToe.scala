@@ -1,7 +1,8 @@
 package com.games.tictactoe
 
-import cats.Monad
+import cats.effect.IO
 import cats.syntax.all._
+import cats.{Monad, Show}
 import com.games.tictactoe.domain._
 
 object domain {
@@ -22,6 +23,17 @@ object domain {
         List.fill(3)(None)
       )
     )
+
+    implicit val showBoard: Show[BoardGame] = (boardGame: BoardGame) => {
+      val NewLine = "\n"
+      boardGame.board.map {
+        _.map {
+          case None => "-"
+          case Some(White) => "w"
+          case Some(Black) => "b"
+        }.mkString("|", "|", "|")
+      }.mkString(NewLine, NewLine, NewLine)
+    }
   }
 
   sealed trait State
@@ -36,33 +48,40 @@ object domain {
 
 }
 
-abstract class TicTacToe[F[_] : Monad] {
+class Console[F[_] : Monad] {
+  def printLine(line: String): F[Unit] = Monad[F].pure(println(line))
+
+  def readLine: F[String] = Monad[F].pure(scala.io.StdIn.readLine)
+}
+
+object Console {
+  def apply[F[_]](implicit console: Console[F]): Console[F] = console
+
+  implicit val consoleIO: Console[IO] = new Console[IO]
+}
+
+abstract class TicTacToe[F[_] : Monad : Console] {
 
   val F = Monad[F]
 
-  def initBoard(implicit m: Monad[F]): F[BoardGame] = m.pure(BoardGame.emptyBpard)
+  def initBoard: F[BoardGame] = F.pure(BoardGame.emptyBpard)
 
-  def chooseStartColor: F[Color] = F.pure {
-    scala.io.StdIn.readLine("Choose color:").toLowerCase match {
-      case "black" => Black
-      case "white" => White
+  def chooseStartColor(color: String): F[Color] = F.pure {
+    val colorRegex = "^(black|white)$".r
+    color match {
+      case colorRegex("black") => Black
+      case colorRegex("white") => White
       case _ => ??? // TODO resolve it
     }
   }
 
   def changeColor(color: Color): F[Color] = if (color == Black) F.pure(White) else F.pure(Black)
 
-  def selectPosition: F[Position] = F.pure { // TODO regular expression
-    scala.io.StdIn.readLine("Choose position:") match {
-      case "00" => Position(0, 0)
-      case "01" => Position(0, 1)
-      case "02" => Position(0, 2)
-      case "10" => Position(1, 0)
-      case "11" => Position(1, 1)
-      case "12" => Position(1, 2)
-      case "20" => Position(2, 0)
-      case "21" => Position(2, 1)
-      case "22" => Position(2, 2)
+  def selectPosition(positionStr: String): F[Position] = F.pure { // TODO regular expression
+    val positionRegex = "^([0-2])([0-2])$".r
+    positionStr match {
+      case positionRegex(row, column) => Position(row.toInt, column.toInt)
+      case _ => ??? // TODO resolve it
     }
   }
 
@@ -94,16 +113,23 @@ abstract class TicTacToe[F[_] : Monad] {
     }
   }
 
+
+
   def startGame: F[(BoardGame, Color)] = for {
     initialBoard <- initBoard
-    color <- chooseStartColor
+    _ <- Console[F].printLine("Choose a color:")
+    colorStr <- Console[F].readLine
+    color <- chooseStartColor(colorStr)
   } yield (initialBoard, color)
 
   def playGame(boardGame: BoardGame, color: Color): F[State] =
     for {
-      position <- selectPosition
+      _ <- Console[F].printLine("Choose a position:")
+      positionStr <- Console[F].readLine
+      position <- selectPosition(positionStr)
       boardGame <- placeColor(boardGame)(color, position)
       gameState <- state(boardGame)
+      _ <- Console[F].printLine(s"the state of the board is $gameState: ${boardGame.show}")
       newColor <- changeColor(color)
       st <- if (gameState == InProgress) playGame(boardGame, newColor) else F.pure(gameState)
     } yield st
