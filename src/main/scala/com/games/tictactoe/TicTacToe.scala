@@ -48,6 +48,48 @@ object domain {
 
 }
 
+
+sealed trait BoardError
+
+case object PoistionBusyError extends BoardError
+
+sealed trait ParserError
+
+case object PoistionParseError extends ParserError
+
+case object ColorParseError extends ParserError
+
+trait Parser[T] {
+  def parse(s: String): Either[ParserError, T]
+}
+
+
+object Parser {
+
+  def apply[T](implicit pr: Parser[T]) = pr
+
+  implicit val positionParser: Parser[Position] = new Parser[Position] {
+    override def parse(s: String): Either[ParserError, Position] = {
+      val positionRegex = "^([0-2])([0-2])$".r
+      s match {
+        case positionRegex(row, column) => Right(Position(row.toInt, column.toInt))
+        case _ => Left(PoistionParseError)
+      }
+    }
+  }
+
+  implicit val colorParser: Parser[Color] = new Parser[Color] {
+    override def parse(s: String): Either[ParserError, Color] = {
+      val colorRegex = "^(black|white)$".r
+      s match {
+        case colorRegex("black") => Right(Black)
+        case colorRegex("white") => Right(White)
+        case _ => Left(ColorParseError)
+      }
+    }
+  }
+}
+
 class Console[F[_] : Monad] {
   def printLine(line: String): F[Unit] = Monad[F].pure(println(line))
 
@@ -66,34 +108,23 @@ abstract class TicTacToe[F[_] : Monad : Console] {
 
   def initBoard: F[BoardGame] = F.pure(BoardGame.emptyBpard)
 
-  def chooseStartColor(color: String): F[Color] = F.pure {
-    val colorRegex = "^(black|white)$".r
-    color match {
-      case colorRegex("black") => Black
-      case colorRegex("white") => White
-      case _ => ??? // TODO resolve it
-    }
-  }
+  def parseStartColor(color: String)(implicit pr: Parser[Color]): F[Either[ParserError, Color]] =
+    F.pure(pr.parse(color))
+
+  def parsePosition(positionStr: String)(implicit pr: Parser[Position]): F[Either[ParserError, Position]] =
+    F.pure(pr.parse(positionStr))
 
   def changeColor(color: Color): F[Color] = if (color == Black) F.pure(White) else F.pure(Black)
 
-  def selectPosition(positionStr: String): F[Position] = F.pure { // TODO regular expression
-    val positionRegex = "^([0-2])([0-2])$".r
-    positionStr match {
-      case positionRegex(row, column) => Position(row.toInt, column.toInt)
-      case _ => ??? // TODO resolve it
-    }
-  }
-
-  def placeColor(boardGame: BoardGame)(color: Color, position: Position): F[BoardGame] =
+  def placeColor(boardGame: BoardGame)(color: Color, position: Position): F[Either[BoardError, BoardGame]] =
     F.pure {
       val board: List[List[Option[Color]]] = boardGame.board
       board(position.row)(position.column) match {
-        case Some(cc) => ??? // TODO resolve it
+        case Some(cc) => Left(PoistionBusyError)
         case None =>
           val row = board(position.row)
           val rowUpdated: List[Option[Color]] = row.updated(position.column, Some(color))
-          BoardGame(board.updated(position.row, rowUpdated))
+          Right(BoardGame(board.updated(position.row, rowUpdated)))
       }
     }
 
@@ -113,25 +144,23 @@ abstract class TicTacToe[F[_] : Monad : Console] {
     }
   }
 
-
-
   def startGame: F[(BoardGame, Color)] = for {
     initialBoard <- initBoard
     _ <- Console[F].printLine("Choose a color:")
     colorStr <- Console[F].readLine
-    color <- chooseStartColor(colorStr)
-  } yield (initialBoard, color)
+    color <- parseStartColor(colorStr)
+  } yield (initialBoard, color.getOrElse(???)) // TODO fix this
 
   def playGame(boardGame: BoardGame, color: Color): F[State] =
     for {
-      _ <- Console[F].printLine("Choose a position:")
+      _ <- Console[F].printLine(s"$color chose a position:")
       positionStr <- Console[F].readLine
-      position <- selectPosition(positionStr)
-      boardGame <- placeColor(boardGame)(color, position)
-      gameState <- state(boardGame)
-      _ <- Console[F].printLine(s"the state of the board is $gameState: ${boardGame.show}")
+      position <- parsePosition(positionStr)
+      boardGame <- placeColor(boardGame)(color, position.getOrElse(???)) //TODO  fix this
+      gameState <- state(boardGame.getOrElse(???)) //TODO  fix this
+      _ <- Console[F].printLine(s"the state of the board is $gameState: ${boardGame.getOrElse(???).show}") //TODO  fix this
       newColor <- changeColor(color)
-      st <- if (gameState == InProgress) playGame(boardGame, newColor) else F.pure(gameState)
+      st <- if (gameState == InProgress) playGame(boardGame.getOrElse(???), newColor) else F.pure(gameState) //TODO  fix this
     } yield st
 
   def game: F[State] = for {
@@ -155,7 +184,6 @@ object Game extends App {
     case Winner(White) => println("White won!!!!")
     case _ => println("There is an error")
   }
-
 }
 
 
