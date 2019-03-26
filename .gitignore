@@ -42,5 +42,4 @@ target
 
 .cache
 .target
-build.sbt
 RUNNING_PID
